@@ -8,6 +8,8 @@ these endpoints; other screens and production integrations remain incomplete.
 ## What is included
 
 - Development-only phone OTP, opaque bearer sessions, profile and logout.
+- Optional Firebase phone identity verification with account isolation and
+  server-side revocation checks (requires separate Firebase configuration).
 - Owner application and administrator approval.
 - PG listing search, property/room/bed creation, owner booking approval,
   tenant booking history, rent invoices and owner dashboard totals.
@@ -31,9 +33,36 @@ never in source code or a mobile app. Prefer a minimally scoped restricted key.
 
 Run locally with `SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run`. **The dev
 profile returns OTP codes in API responses and must never be enabled in a
-deployed or publicly accessible environment.** It does not send SMS. Without
-the dev profile there is currently no login provider. A production OTP provider,
-abuse protections and a production session lifecycle are still required.
+deployed or publicly accessible environment.** It does not send SMS.
+
+## Firebase phone authentication
+
+Use a **fresh separate database** and a separate Firebase project for each
+environment. Set `PGCONNECT_FIREBASE_ENABLED=true` and
+`PGCONNECT_FIREBASE_PROJECT_ID` to the exact Firebase project ID. Supply
+Application Default Credentials securely using the hosting platform's
+service identity, with permissions to verify and manage Firebase Auth users.
+For local testing use a separately provisioned credential file referenced by
+`GOOGLE_APPLICATION_CREDENTIALS`; never commit, paste or embed it in the app.
+The backend fails startup if Firebase and the `dev` profile are both enabled
+or if the Firebase Auth emulator is configured.
+
+The app sends a Firebase ID token as the bearer token. The backend verifies
+its signature, issuer, audience, expiration, phone provider and revocation
+status and checks that its Firebase UID and verified phone match the database.
+First sign-in calls `POST /api/v1/auth/firebase/register` with `fullName`;
+the verified UID is registered as an ordinary user. A phone number belonging to
+an existing account is **not** automatically linked; it requires manual review.
+Owner/admin access still comes only from the backend database.
+`POST /api/v1/auth/logout` revokes Firebase refresh tokens for **all devices**.
+Firebase token checks require connectivity to Google; outages fail closed.
+
+This integration is not yet a production security review. Configure HTTPS,
+abuse/rate limits, account recovery and phone-number reassignment procedures,
+admin access controls, monitoring, backups and secrets management before
+deployment. Phone authentication depends on Firebase availability and SMS
+pricing/quotas. Firebase phone sign-in sends phone numbers to Google for abuse
+prevention; review consent and privacy requirements before launch.
 
 ## Swagger UI
 
@@ -52,7 +81,8 @@ reach the server; restrict access at the network or deployment layer if needed.
 
 All paths start with `/api/v1`. Requests and responses use JSON. Except for
 property search/details, the amenities catalog, dev OTP and the Stripe webhook, requests require
-`Authorization: Bearer <accessToken>`.
+`Authorization: Bearer <accessToken>`. Firebase registration also requires a
+verified Firebase ID token.
 
 1. `POST /auth/dev/otp` with `{"phone":"+919876543210"}`; use the returned
    development code in `POST /auth/dev/verify` with

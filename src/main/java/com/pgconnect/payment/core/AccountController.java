@@ -11,6 +11,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.beans.factory.ObjectProvider;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -21,7 +22,10 @@ import java.util.UUID;
 public class AccountController {
     private final JdbcTemplate jdbc;
     private final Access access;
-    public AccountController(JdbcTemplate jdbc, Access access) { this.jdbc=jdbc; this.access=access; }
+    private final ObjectProvider<FirebaseIdentity> firebase;
+    public AccountController(JdbcTemplate jdbc, Access access, ObjectProvider<FirebaseIdentity> firebase) {
+        this.jdbc=jdbc; this.access=access; this.firebase=firebase;
+    }
     public record Application(@NotBlank @Size(max=150) String displayName) {}
     public record Profile(@NotBlank @Size(max=150) String fullName) {}
 
@@ -40,7 +44,14 @@ public class AccountController {
     }
     @PostMapping("/auth/logout")
     public void logout(@Parameter(hidden=true) @RequestHeader("Authorization") String header, @AuthenticationPrincipal UUID user) {
-        jdbc.update("DELETE FROM auth_sessions WHERE token_hash=? AND user_id=?", Tokens.hash(header.substring(7)), user);
+        FirebaseIdentity identity=firebase.getIfAvailable();
+        if (identity != null) {
+            String uid=jdbc.queryForObject("SELECT firebase_uid FROM users WHERE id=?",String.class,user);
+            if (uid==null) throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Firebase account required");
+            identity.revoke(uid);
+        } else {
+            jdbc.update("DELETE FROM auth_sessions WHERE token_hash=? AND user_id=?", Tokens.hash(header.substring(7)), user);
+        }
     }
     @PostMapping("/owner-applications")
     public Map<String,Object> apply(@AuthenticationPrincipal UUID user, @Valid @RequestBody Application body) {

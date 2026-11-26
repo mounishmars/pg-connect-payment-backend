@@ -6,6 +6,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -15,6 +18,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.server.ResponseStatusException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -28,11 +32,13 @@ import java.util.UUID;
 @Configuration
 public class SecurityConfig {
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, JdbcTemplate jdbc) throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http, JdbcTemplate jdbc,
+                                            ObjectProvider<FirebaseIdentity> firebase, Environment environment) throws Exception {
         return http.csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/dev/otp", "/api/v1/auth/dev/verify", "/api/v1/webhooks/stripe").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/dev/otp", "/api/v1/auth/dev/verify",
+                                "/api/v1/auth/firebase/register", "/api/v1/webhooks/stripe").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/info", "/api/v1/properties", "/api/v1/properties/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/properties/*/photos", "/api/v1/properties/*/photos/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/amenities").permitAll()
@@ -40,19 +46,37 @@ public class SecurityConfig {
                         .anyRequest().authenticated())
                 .httpBasic(basic -> basic.disable()).formLogin(form -> form.disable())
                 .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, ex) -> response.sendError(401)))
-                .addFilterBefore(new TokenFilter(jdbc), UsernamePasswordAuthenticationFilter.class).build();
+                .addFilterBefore(new TokenFilter(jdbc, firebase, environment.acceptsProfiles(Profiles.of("dev"))),
+                        UsernamePasswordAuthenticationFilter.class).build();
     }
 
     static final class TokenFilter extends OncePerRequestFilter {
         private final JdbcTemplate jdbc;
-        TokenFilter(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+        private final ObjectProvider<FirebaseIdentity> firebase;
+        private final boolean development;
+        TokenFilter(JdbcTemplate jdbc, ObjectProvider<FirebaseIdentity> firebase, boolean development) {
+            this.jdbc=jdbc; this.firebase=firebase; this.development=development;
+        }
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
                 throws ServletException, IOException {
             String header = request.getHeader("Authorization");
-            if (header != null && header.startsWith("Bearer ")) {
+            if (header != null && header.startsWith("Bearer ")
+                    && !request.getRequestURI().equals("/api/v1/auth/firebase/register")) {
                 String token = header.substring(7);
-                if (!token.isBlank() && token.length() <= 256) {
+                FirebaseIdentity identity=firebase.getIfAvailable();
+                if (identity != null) {
+                    try {
+                        FirebaseIdentity.Identity verified=identity.verify(token);
+                        List<UUID> users=jdbc.queryForList(
+                                "SELECT id FROM users WHERE firebase_uid=? AND phone_number=?",UUID.class,verified.uid(),verified.phone());
+                        if (!users.isEmpty()) SecurityContextHolder.getContext().setAuthentication(
+                                new UsernamePasswordAuthenticationToken(users.get(0), null, List.of()));
+                    } catch (ResponseStatusException e) {
+                        response.sendError(e.getStatusCode().value(),e.getReason());
+                        return;
+                    }
+                } else if (development && !token.isBlank() && token.length() <= 256) {
                     List<UUID> users = jdbc.query("SELECT user_id FROM auth_sessions WHERE token_hash=? AND expires_at>now()",
                             (rs, row) -> rs.getObject(1, UUID.class), Tokens.hash(token));
                     if (!users.isEmpty()) SecurityContextHolder.getContext().setAuthentication(
