@@ -1,0 +1,288 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                                                                            ║
+║          SWITCHING FROM CASHFREE TO STRIPE - QUICK START GUIDE            ║
+║                                                                            ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+✨ WHY STRIPE INSTEAD OF CASHFREE?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✓ No bank account needed for sandbox/testing
+✓ Free test mode with test card numbers
+✓ Just API keys - no KYC or verification
+✓ Perfect for development and testing
+✓ Webhooks are easy to test locally
+✓ Excellent documentation
+
+
+🚀 QUICK START (5 MINUTES)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Option 1: Automated Setup (Recommended)
+────────────────────────────────────
+cd ~/Documents/pg/pg-connect-payment-starter
+./setup-stripe.sh
+
+This script will guide you through:
+1. Creating a Stripe account
+2. Getting API keys
+3. Setting up webhooks
+4. Saving configuration
+
+
+Option 2: Manual Setup
+──────────────────────
+See "MANUAL SETUP" section below
+
+
+📋 MANUAL SETUP STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STEP 1: Create Stripe Account
+─────────────────────────────
+1. Go to: https://dashboard.stripe.com/register
+2. Sign up with your email
+3. Verify your email
+
+STEP 2: Get API Keys
+───────────────────
+1. Log in to: https://dashboard.stripe.com
+2. Click "Developers" (top right)
+3. Click "API keys"
+4. Under "Standard keys" you'll see:
+   - Publishable key (starts with pk_test_)
+   - Secret key (starts with sk_test_)
+5. COPY THE SECRET KEY (this is your API key)
+
+STEP 3: Get Webhook Secret
+──────────────────────────
+1. Still in Developers section
+2. Scroll to "Webhooks"
+3. Click "Add an endpoint"
+4. Enter: http://localhost:8080/api/v1/webhooks/stripe
+5. Select these events:
+   - charge.succeeded
+   - charge.failed
+   - payment_intent.succeeded
+   - payment_intent.payment_failed
+6. Click "Create endpoint"
+7. Click "Reveal" to show Webhook Signing Secret (starts with whsec_)
+8. COPY THIS SECRET
+
+STEP 4: Set Environment Variables
+──────────────────────────────────
+Create/edit ~/.zshrc_pgconnect_stripe with:
+
+```
+export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
+export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH"
+export DB_URL='jdbc:postgresql://localhost:5432/pgconnect'
+export DB_USERNAME='mkuma153'
+export DB_PASSWORD=''
+export STRIPE_API_KEY='sk_test_your_key_here'
+export STRIPE_WEBHOOK_SECRET='whsec_your_secret_here'
+```
+
+STEP 5: Update Project Dependencies
+────────────────────────────────────
+Your pom.xml will need Stripe dependency. See: STRIPE_MIGRATION_GUIDE.md
+
+
+🏃 HOW TO RUN THE APPLICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+cd ~/Documents/pg/pg-connect-payment-starter
+
+# Load Stripe environment
+source ~/.zshrc_pgconnect_stripe
+
+# Install dependencies (first time only)
+mvn clean install
+
+# Run the application
+mvn spring-boot:run
+
+Application will start on: http://localhost:8080
+
+
+🧪 TEST WITH STRIPE TEST CARDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Success Payment:
+  Card Number: 4242 4242 4242 4242
+  Expiry: 12/25 (or any future date)
+  CVC: 123
+  ZIP: 12345
+  Result: Payment succeeds ✓
+
+
+Failed Payment:
+  Card Number: 4000 0000 0000 0002
+  Expiry: 12/25
+  CVC: 123
+  Result: Payment declines ✗
+
+
+International Testing:
+  Visit: https://stripe.com/docs/testing
+  For more test card numbers by region
+
+
+🔗 API ENDPOINT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create Payment:
+  POST http://localhost:8080/api/v1/customer/rent/payments
+  
+  Headers:
+    Content-Type: application/json
+    X-Authenticated-User: <user-uuid>
+    Idempotency-Key: <unique-key>
+  
+  Body:
+    {
+      "invoiceId": "<invoice-uuid>",
+      "amount": 2500.00,
+      "customerPhone": "9876543210"
+    }
+
+Response:
+    {
+      "paymentOrderId": "<order-uuid>",
+      "orderReference": "ORDER-123456",
+      "amount": 2500.00,
+      "status": "pending",
+      "clientSecret": "pi_test_..._secret_..."
+    }
+
+The clientSecret is used by your frontend to complete the payment using Stripe.js
+
+
+📚 DOCUMENTATION FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STRIPE_MIGRATION_GUIDE.md
+  ↳ Complete guide to migrating from Cashfree to Stripe
+  ↳ Detailed code examples
+  ↳ Troubleshooting tips
+
+setup-stripe.sh
+  ↳ Interactive setup script
+  ↳ Guides you through getting API keys
+  ↳ Automatically saves configuration
+
+SETUP_GUIDE.md
+  ↳ General project setup (still valid)
+  ↳ Database setup
+  ↳ Prerequisites
+
+
+🛠️ CONFIGURATION FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Main Configuration:
+  ~/.zshrc_pgconnect_stripe          ← Load this before running app
+
+Application Config:
+  src/main/resources/application.yml ← Stripe settings
+
+Environment:
+  STRIPE_API_KEY='sk_test_...'       ← Your secret key
+  STRIPE_WEBHOOK_SECRET='whsec_...'  ← Your webhook secret
+
+
+⚙️ WHAT GETS INSTALLED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Maven Dependencies:
+  com.stripe:stripe-java (version 26.1.0)
+
+New Java Classes:
+  StripeClient.java           ← Communicates with Stripe API
+  StripeWebhookVerifier.java  ← Verifies webhook signatures
+  StripeWebhookController.java← Handles Stripe events
+
+Updated Classes:
+  RentPaymentController.java  ← Returns Stripe client secret
+  application.yml             ← Stripe configuration
+
+
+🔐 SECURITY NOTES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✓ Never commit API keys to git
+✓ Use environment variables instead
+✓ For production, use a secrets management system
+✓ The X-Authenticated-User header is DEMO ONLY
+  → Replace with Spring Security/JWT in production
+✓ Enable HTTPS before going live
+
+
+❓ FAQ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Q: Do I need a bank account for Stripe testing?
+A: No! Stripe sandbox (test mode) works with test cards only.
+
+Q: How do I test locally without exposing my API key?
+A: Use environment variables. Never hardcode keys in code.
+
+Q: Can I test webhooks locally?
+A: Yes! Use Stripe CLI: brew install stripe/stripe-cli/stripe
+   Then: stripe listen --forward-to localhost:8080/api/v1/webhooks/stripe
+
+Q: Do I need a website for Stripe?
+A: No! Stripe works for backend APIs and mobile apps.
+
+Q: Can I switch back to Cashfree later?
+A: Yes! You can create a PaymentGateway interface and swap implementations.
+
+Q: What about production?
+A: Get live API keys from Stripe, follow PCI compliance,
+   and implement proper security (HTTPS, authentication, rate limiting).
+
+
+🚀 NEXT STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Run setup script:
+   ./setup-stripe.sh
+
+2. Install dependencies:
+   mvn clean install
+
+3. Start the application:
+   source ~/.zshrc_pgconnect_stripe
+   mvn spring-boot:run
+
+4. Test the API:
+   curl -X POST http://localhost:8080/api/v1/customer/rent/payments \
+     -H "Content-Type: application/json" \
+     -H "X-Authenticated-User: 550e8400-e29b-41d4-a716-446655440000" \
+     -H "Idempotency-Key: test-key-1" \
+     -d '{
+       "invoiceId": "550e8400-e29b-41d4-a716-446655440001",
+       "amount": 2500.00,
+       "customerPhone": "9876543210"
+     }'
+
+5. Test with Stripe test cards (see above)
+
+6. Build your frontend to use the clientSecret
+
+
+📞 SUPPORT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Stripe Documentation:
+  https://stripe.com/docs/api
+
+Stripe Support:
+  https://support.stripe.com
+
+Community:
+  https://stripe.com/community
+
+
+✨ You're ready to test Stripe payments! No bank account needed. 🎉
