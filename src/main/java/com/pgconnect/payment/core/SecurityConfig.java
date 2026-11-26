@@ -34,6 +34,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/dev/otp", "/api/v1/auth/dev/verify", "/api/v1/webhooks/stripe").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/info", "/api/v1/properties", "/api/v1/properties/*").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/properties/*/photos", "/api/v1/properties/*/photos/*").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/amenities").permitAll()
                         .requestMatchers(HttpMethod.GET, "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
                         .anyRequest().authenticated())
                 .httpBasic(basic -> basic.disable()).formLogin(form -> form.disable())

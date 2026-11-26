@@ -13,6 +13,9 @@ these endpoints; other screens and production integrations remain incomplete.
   tenant booking history, rent invoices and owner dashboard totals.
 - Test-mode Stripe PaymentIntent creation, native checkout support and
   server-verified payment updates.
+- Owner-managed property photos, stored in the local PostgreSQL database for
+  development, with a cover photo and ordering.
+- Standard amenities, property search filters and user-specific saved PGs.
 
 Owner approval is required before property management. Booking requests are
 pending until the owner approves them; approval rejects other pending requests
@@ -48,7 +51,7 @@ reach the server; restrict access at the network or deployment layer if needed.
 ### Try the API
 
 All paths start with `/api/v1`. Requests and responses use JSON. Except for
-property search/details, dev OTP and the Stripe webhook, requests require
+property search/details, the amenities catalog, dev OTP and the Stripe webhook, requests require
 `Authorization: Bearer <accessToken>`.
 
 1. `POST /auth/dev/otp` with `{"phone":"+919876543210"}`; use the returned
@@ -83,6 +86,28 @@ property search/details, dev OTP and the Stripe webhook, requests require
    `{"bookingId":"<uuid>","amount":8000.00,"dueDate":"2026-12-01"}`.
    Invoices are listed at `/owner/invoices` and `/customer/invoices`;
    `/owner/dashboard` returns totals.
+6. Owners can manage photos at `/owner/properties/{id}/photos`: upload a
+   multipart `file`, list, delete, set a cover at `/{photoId}/cover`, or
+   reorder with `PUT /order` and `{"photoIds":["<uuid>","<uuid>"]}`.
+   The first image is the cover. Public photo lists and image bytes are at
+   `/properties/{id}/photos` and `/properties/{id}/photos/{photoId}` for
+   active properties only. Uploads are limited to 10 JPEG/PNG images per
+   property, 5 MiB and 16 megapixels per image.
+7. `GET /amenities` lists the standard catalog. Approved owners can read and
+   replace a property's selections via `GET` and `PUT
+   /owner/properties/{id}/amenities` with `{"codes":["wifi","parking"]}`.
+   Search supports `query`, `maxRent`, `availableOnly`, repeated `amenity`
+   parameters and `offset`. Rent and availability must match the same room;
+   all selected amenities must be present. Results are returned in pages of
+   50, with an offset of at most 10000.
+8. Authenticated users can list `GET /customer/saved-properties`, save an
+   active property with `POST /customer/saved-properties/{id}` and remove it
+   with `DELETE` on the same path. Inactive properties are hidden from the list.
+
+Photo bytes are stored in PostgreSQL, alongside metadata, for local development.
+This increases database and backup size; use durable object storage and review
+access, backups and moderation before production. Uploaded image metadata is
+not stripped, so owners should remove location information before uploading.
 
 The existing payment-order endpoint, `POST /customer/rent/payments`, now uses
 the bearer session rather than the old caller-controlled
@@ -125,8 +150,8 @@ to be tested with the account's own sandbox configuration.
 - Stripe Connect onboarding, settlement, refunds, ledger and reconciliation
   are not implemented. Existing payment-related database tables are not proof
   that these workflows exist.
-- Production authentication, authorization review, rate limiting, media uploads,
-  amenities, notification delivery, subscriptions, receipts and full inventory
+- Production authentication, authorization review, rate limiting, production media storage,
+  notification delivery, subscriptions, receipts and full inventory
   management are not implemented. Existing placeholder screens need Flutter
   integration and further product requirements.
 - Migration V2 creates a unique owner-per-user index; inspect and resolve any

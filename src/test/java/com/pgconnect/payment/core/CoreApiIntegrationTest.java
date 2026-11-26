@@ -11,7 +11,12 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.annotation.Transactional;
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -121,5 +126,92 @@ class CoreApiIntegrationTest {
         postJson("/api/v1/auth/dev/verify",null,Map.of("phone",phone,"code",wrong,"fullName","Test"),401);
         postJson("/api/v1/auth/dev/verify",null,Map.of("phone",phone,"code",code,"fullName","Test"),200);
         postJson("/api/v1/auth/dev/verify",null,Map.of("phone",phone,"code",code,"fullName","Test"),401);
+    }
+
+    @Test
+    void propertyPhotosAreScopedOrderedAndRestrictedToValidImages() throws Exception {
+        JsonNode owner=signIn("+919000000006"), other=signIn("+919000000007");
+        String ownerToken=owner.get("accessToken").asText(), otherToken=other.get("accessToken").asText();
+        UUID ownerId=UUID.randomUUID(), otherId=UUID.randomUUID();
+        jdbc.update("INSERT INTO owner_profiles(id,user_id,display_name) VALUES (?,?,?),(?,?,?)",
+                ownerId,UUID.fromString(owner.get("userId").asText()),"Owner",
+                otherId,UUID.fromString(other.get("userId").asText()),"Other");
+        String property=postJson("/api/v1/owner/properties",ownerToken,
+                Map.of("name","Photo PG","description","","address","Address","area","OMR","city","Chennai","active",true),200).get("id").asText();
+        String path="/api/v1/owner/properties/"+property+"/photos";
+        var image=new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(2,2,BufferedImage.TYPE_INT_RGB),"png",image);
+        var file=new MockMultipartFile("file","image.png","image/png",image.toByteArray());
+        mvc.perform(multipart(path).file(file).header("Authorization","Bearer "+otherToken)).andExpect(status().isNotFound());
+        mvc.perform(multipart(path).file(new MockMultipartFile("file","fake.png","image/png",new byte[]{1,2,3}))
+                .header("Authorization","Bearer "+ownerToken)).andExpect(status().isBadRequest());
+        mvc.perform(multipart(path).file(new MockMultipartFile("file","large.png","image/png",new byte[5*1024*1024+1]))
+                .header("Authorization","Bearer "+ownerToken)).andExpect(status().isBadRequest());
+        String first=json.readTree(mvc.perform(multipart(path).file(file).header("Authorization","Bearer "+ownerToken))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).get("id").asText();
+        String second=json.readTree(mvc.perform(multipart(path).file(file).header("Authorization","Bearer "+ownerToken))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).get("id").asText();
+        mvc.perform(get("/api/v1/properties/"+property+"/photos/"+first))
+                .andExpect(status().isOk()).andExpect(content().contentType("image/png"))
+                .andExpect(content().bytes(image.toByteArray()));
+        mvc.perform(put(path+"/order").header("Authorization","Bearer "+ownerToken)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(Map.of("photoIds",List.of(first,first)))))
+                .andExpect(status().isBadRequest());
+        mvc.perform(put(path+"/"+second+"/cover").header("Authorization","Bearer "+ownerToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value(second))
+                .andExpect(jsonPath("$[0].cover").value(true));
+        mvc.perform(put(path+"/order").header("Authorization","Bearer "+ownerToken)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(Map.of("photoIds",List.of(first,second)))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value(first));
+        mvc.perform(delete(path+"/"+first).header("Authorization","Bearer "+otherToken)).andExpect(status().isNotFound());
+        mvc.perform(delete(path+"/"+first).header("Authorization","Bearer "+ownerToken)).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/properties/"+property+"/photos"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value(second))
+                .andExpect(jsonPath("$[0].cover").value(true));
+        for (int i=0; i<9; i++)
+            mvc.perform(multipart(path).file(file).header("Authorization","Bearer "+ownerToken)).andExpect(status().isOk());
+        mvc.perform(multipart(path).file(file).header("Authorization","Bearer "+ownerToken)).andExpect(status().isBadRequest());
+        jdbc.update("UPDATE properties SET active=false WHERE id=?",UUID.fromString(property));
+        mvc.perform(get("/api/v1/properties/"+property+"/photos/"+second)).andExpect(status().isNotFound());
+        mvc.perform(get(path+"/"+second).header("Authorization","Bearer "+ownerToken)).andExpect(status().isOk());
+    }
+
+    @Test
+    void filtersAmenitiesAndSavedPropertiesAreScopedToUsers() throws Exception {
+        JsonNode owner=signIn("+919000000008"), other=signIn("+919000000009");
+        String ownerToken=owner.get("accessToken").asText(), otherToken=other.get("accessToken").asText();
+        UUID ownerId=UUID.randomUUID();
+        jdbc.update("INSERT INTO owner_profiles(id,user_id,display_name) VALUES (?,?,?)",
+                ownerId,UUID.fromString(owner.get("userId").asText()),"Owner");
+        String property=postJson("/api/v1/owner/properties",ownerToken,
+                Map.of("name","Filter PG","description","","address","Address","area","OMR","city","Chennai","active",true),200).get("id").asText();
+        String amenityPath="/api/v1/owner/properties/"+property+"/amenities";
+        mvc.perform(put(amenityPath).header("Authorization","Bearer "+otherToken)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"codes\":[\"wifi\"]}")).andExpect(status().isForbidden());
+        mvc.perform(put(amenityPath).header("Authorization","Bearer "+ownerToken)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"codes\":[\"wifi\",\"meals\"]}")).andExpect(status().isOk());
+        mvc.perform(put(amenityPath).header("Authorization","Bearer "+ownerToken)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"codes\":[\"unknown\"]}")).andExpect(status().isBadRequest());
+        mvc.perform(get(amenityPath).header("Authorization","Bearer "+ownerToken))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2));
+        String cheap=postJson("/api/v1/owner/properties/"+property+"/rooms",ownerToken,Map.of("name","Cheap","monthlyRent","5000"),200).get("id").asText();
+        String expensive=postJson("/api/v1/owner/properties/"+property+"/rooms",ownerToken,Map.of("name","Expensive","monthlyRent","9000"),200).get("id").asText();
+        postJson("/api/v1/owner/rooms/"+expensive+"/beds",ownerToken,Map.of("label","A"),200);
+        mvc.perform(get("/api/v1/properties").param("query","Chennai").param("maxRent","6000").param("availableOnly","true")
+                .param("amenity","wifi").param("amenity","meals"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
+        postJson("/api/v1/owner/rooms/"+cheap+"/beds",ownerToken,Map.of("label","B"),200);
+        mvc.perform(get("/api/v1/properties").param("query","Chennai").param("maxRent","6000").param("availableOnly","true")
+                .param("amenity","wifi").param("amenity","meals"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value(property));
+        String saved="/api/v1/customer/saved-properties";
+        mvc.perform(post(saved+"/"+property).header("Authorization","Bearer "+ownerToken)).andExpect(status().isOk());
+        mvc.perform(post(saved+"/"+property).header("Authorization","Bearer "+ownerToken)).andExpect(status().isOk());
+        mvc.perform(get(saved).header("Authorization","Bearer "+ownerToken)).andExpect(jsonPath("$.length()").value(1));
+        mvc.perform(get(saved).header("Authorization","Bearer "+otherToken)).andExpect(jsonPath("$.length()").value(0));
+        mvc.perform(delete(saved+"/"+property).header("Authorization","Bearer "+otherToken)).andExpect(status().isOk());
+        mvc.perform(get(saved).header("Authorization","Bearer "+ownerToken)).andExpect(jsonPath("$.length()").value(1));
+        mvc.perform(delete(saved+"/"+property).header("Authorization","Bearer "+ownerToken)).andExpect(status().isOk());
+        mvc.perform(get(saved).header("Authorization","Bearer "+ownerToken)).andExpect(jsonPath("$.length()").value(0));
     }
 }
