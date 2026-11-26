@@ -20,5 +20,6 @@ management:
 stripe:
   api-key: ${STRIPE_API_KEY:}
   webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+  test-checkout-enabled: ${STRIPE_TEST_CHECKOUT_ENABLED:false}
   success-url: ${STRIPE_SUCCESS_URL:http://localhost:8080/api/v1/payment/success}
   cancel-url: ${STRIPE_CANCEL_URL:http://localhost:8080/api/v1/payment/cancel}

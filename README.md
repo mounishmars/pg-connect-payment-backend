@@ -1,79 +1,152 @@
-# PG Connect – Payment Starter (Spring Boot)
+# PG Connect backend starter
 
-Starter scaffold for the first manual rent-payment release using Cashfree PG + Easy Split.
+Spring Boot/PostgreSQL backend for the PG Connect Flutter starter. This is a
+development foundation, **not production-ready software**. The Flutter app
+connects its core login, discovery, booking, invoice and owner workflows to
+these endpoints; other screens and production integrations remain incomplete.
 
-## Important integration boundaries
+## What is included
 
-This is a **starter scaffold, not production-ready payment software**. It intentionally does not pretend that a verified webhook alone is enough to post a rent payment. Before production, implement the durable webhook worker that fetches the authoritative Cashfree payment/order state, validates amount/currency/order/vendor, and atomically writes payment transaction + invoice allocation + balanced ledger entries.
+- Development-only phone OTP, opaque bearer sessions, profile and logout.
+- Owner application and administrator approval.
+- PG listing search, property/room/bed creation, owner booking approval,
+  tenant booking history, rent invoices and owner dashboard totals.
+- Test-mode Stripe PaymentIntent creation, native checkout support and
+  server-verified payment updates.
 
-Cashfree's current documentation describes Easy Split's Split After Payment endpoint as `POST /pg/easy-split/orders/{order_id}/split`, and says to wait 2 minutes after successful payment confirmation before invoking it. The settlement split worker is therefore a separate asynchronous job, not part of the synchronous webhook request. The actual split amount/vendor-fee handling must be confirmed with Cashfree for the PG Connect account. See https://www.cashfree.com/docs/api-reference/payments/latest/easy-split/split-after-payment.
+Owner approval is required before property management. Booking requests are
+pending until the owner approves them; approval rejects other pending requests
+for the same bed. Approved bookings represent occupancy until completed.
 
-Cashfree webhook signature verification uses `x-webhook-signature`, `x-webhook-timestamp`, and HMAC-SHA256 over `timestamp + rawBody`, Base64 encoded. Keep the raw request body intact. See https://github.com/cashfree/cashfree-pg/blob/main/docs/Webhook.md.
+## Local setup
 
-## Prerequisites
+Requires Java 21+, Maven, and PostgreSQL 15+. Create a dedicated database and
+configure `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`. Flyway runs the schema
+migrations automatically. Stripe settings are `STRIPE_API_KEY` and
+`STRIPE_WEBHOOK_SECRET`; keep keys in a secrets manager or local environment,
+never in source code or a mobile app. Prefer a minimally scoped restricted key.
 
-- Java 21
-- Maven 3.9+
-- PostgreSQL 15+
-- Cashfree sandbox credentials and Easy Split enabled for the merchant account
+Run locally with `SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run`. **The dev
+profile returns OTP codes in API responses and must never be enabled in a
+deployed or publicly accessible environment.** It does not send SMS. Without
+the dev profile there is currently no login provider. A production OTP provider,
+abuse protections and a production session lifecycle are still required.
 
-## Run
+## Swagger UI
+
+When the backend is running, open
+http://localhost:8080/swagger-ui/index.html (or replace `8080` with `SERVER_PORT`).
+The OpenAPI JSON is at http://localhost:8080/v3/api-docs. In the dev profile,
+use `/auth/dev/otp` and `/auth/dev/verify`, then click **Authorize** and enter
+the returned `accessToken` without the `Bearer` prefix. Owner and admin routes
+also require their corresponding server-side approval. The development OTP
+routes appear in the documentation only when the dev profile is active.
+
+Swagger and the API specification are publicly accessible to anyone who can
+reach the server; restrict access at the network or deployment layer if needed.
+
+### Try the API
+
+All paths start with `/api/v1`. Requests and responses use JSON. Except for
+property search/details, dev OTP and the Stripe webhook, requests require
+`Authorization: Bearer <accessToken>`.
+
+1. `POST /auth/dev/otp` with `{"phone":"+919876543210"}`; use the returned
+   development code in `POST /auth/dev/verify` with
+   `{"phone":"+919876543210","code":"<code>","fullName":"Name"}`. Use the
+   returned token for the other requests. `GET /me` returns identity, owner
+   application status and owner/admin flags. `PUT /me` accepts `fullName`;
+   `POST /auth/logout` revokes the current session.
+2. `POST /owner-applications` with `{"displayName":"My PG"}`. An existing
+   administrator can list `GET /admin/owner-applications` and approve or reject
+   via `POST /admin/owner-applications/{id}/approve` or `/reject`. For local
+   development only, create the first admin by setting `users.is_admin = true`
+   for that user directly in the local database. There is no public admin
+   bootstrap API.
+3. An approved owner can `POST /owner/properties` with `name`, `description`,
+   `address`, `area`, `city`, and `active`; add rooms with
+   `POST /owner/properties/{id}/rooms` (`name`, `monthlyRent`) and beds with
+   `POST /owner/rooms/{id}/beds` (`label`). List owner properties with
+   `GET /owner/properties`, edit with `PUT /owner/properties/{id}`, and inspect
+   inventory with `GET /owner/properties/{id}/rooms`. Edit rooms with
+   `PUT /owner/rooms/{id}` (`name`, `monthlyRent`, `active`) and beds with
+   `PUT /owner/beds/{id}` (`label`, `active`). Inactive inventory is hidden
+   from discovery; existing approved occupancies remain recorded.
+4. Customers can search `GET /properties?query=Chennai&offset=0` and view
+   `GET /properties/{id}`. Request an available bed using
+   `POST /customer/bookings` with `{"bedId":"<uuid>"}`. Owners list
+   `/owner/bookings` and approve, reject or complete through
+   `POST /owner/bookings/{id}/{approve|reject|complete}`. Customers list
+   `/customer/bookings` and cancel pending requests at
+   `POST /customer/bookings/{id}/cancel`.
+5. Owners create invoices with `POST /owner/invoices`, e.g.
+   `{"bookingId":"<uuid>","amount":8000.00,"dueDate":"2026-12-01"}`.
+   Invoices are listed at `/owner/invoices` and `/customer/invoices`;
+   `/owner/dashboard` returns totals.
+
+The existing payment-order endpoint, `POST /customer/rent/payments`, now uses
+the bearer session rather than the old caller-controlled
+`X-Authenticated-User` header. It requires an `Idempotency-Key` header and
+`invoiceId`, `amount`, and `customerEmail` in the body. The response includes
+the Stripe client secret as `paymentSessionId`. Do not log or expose it to
+other users.
+
+### Stripe test checkout
+
+Checkout is disabled by default. To enable it locally, configure a Stripe
+sandbox test API key, its webhook signing secret, and
+`STRIPE_TEST_CHECKOUT_ENABLED=true`, then restart the backend. The backend
+rejects live-mode keys when this flag is enabled. Never share keys or put them
+in source code; prefer a restricted key with the required permissions.
+Forward sandbox events with Stripe CLI:
 
 ```bash
-createdb pgconnect
-export DB_URL='jdbc:postgresql://localhost:5432/pgconnect'
-export DB_USERNAME='your_db_user'
-export DB_PASSWORD='your_db_password'
-export CASHFREE_BASE_URL='https://sandbox.cashfree.com/pg'
-export CASHFREE_CLIENT_ID='your_sandbox_app_id'
-export CASHFREE_CLIENT_SECRET='your_sandbox_secret'
-export CASHFREE_WEBHOOK_SECRET='your_webhook_secret'
-mvn spring-boot:run
+stripe listen --events payment_intent.succeeded --forward-to localhost:8081/api/v1/webhooks/stripe
 ```
 
-Flyway runs `V1__payment_foundation.sql` automatically. The migration includes minimal `users` and `owner_profiles` parent tables so the starter runs independently. When merging into the main PG Connect database, remove those two parent-table definitions and point the foreign keys at the existing identity/owner tables.
+Set `STRIPE_WEBHOOK_SECRET` to the signing secret for that forwarding session
+and restart the backend after setting it. Signed `payment_intent.succeeded`
+events cause the server to retrieve the PaymentIntent from Stripe, validate it,
+and atomically update the invoice and payment transaction. The app can also
+request reconciliation; a checkout callback alone never marks an invoice paid.
+Only one payment may be open for an invoice at a time; it can be resumed or
+cancelled after Stripe confirms cancellation.
 
-## API
+The Flutter app additionally needs its sandbox **publishable** key and explicit
+test flag; see its README. This flow charges the platform Stripe account; it
+does not pay owners. Stripe CLI forwarding and real sandbox checkout still need
+to be tested with the account's own sandbox configuration.
 
-`POST /api/v1/customer/rent/payments`
+## Important gaps
 
-Headers:
-
-- `X-Authenticated-User: <tenant UUID>` **DEMO ONLY**; replace with the authenticated Spring Security principal before any deployment.
-- `Idempotency-Key: <unique client-generated key>`
-
-Body:
-
-```json
-{
-  "invoiceId": "<invoice UUID>",
-  "amount": 2500.00,
-  "customerPhone": "9876543210"
-}
-```
-
-The amount is validated against the locked invoice balance. Partial payments are allowed. Never accept identity from a caller-controlled header in production.
-
-Webhook: `POST /api/v1/webhooks/cashfree`.
-
-## Deliberately not implemented yet
-
-- Production Spring Security/JWT principal mapping and owner/tenant authorization.
-- Cashfree Easy Split vendor onboarding API and vendor KYC status sync.
-- Durable async webhook worker + Cashfree Get Payments verification.
-- Invoice allocation across multiple successful partial payment transactions.
-- Delayed Easy Split split-after-payment job (minimum 2-minute wait per current docs).
-- Gateway fee attribution to owner and actual split/net settlement calculations.
-- Refund API and vendor balance adjustment workflow.
-- Double-entry ledger and daily settlement reconciliation.
-- Subscription billing (separate PG Connect merchant flow).
-- UPI AutoPay (phase 2).
-- Integration tests against PostgreSQL/Testcontainers and Cashfree sandbox.
+- Stripe checkout is test-only. Refund and dispute events, ledger entries,
+  recovery/operations and production security are incomplete. Do not enable
+  live payments.
+- Stripe Connect onboarding, settlement, refunds, ledger and reconciliation
+  are not implemented. Existing payment-related database tables are not proof
+  that these workflows exist.
+- Production authentication, authorization review, rate limiting, media uploads,
+  amenities, notification delivery, subscriptions, receipts and full inventory
+  management are not implemented. Existing placeholder screens need Flutter
+  integration and further product requirements.
+- Migration V2 creates a unique owner-per-user index; inspect and resolve any
+  duplicate owner profiles before applying it to an existing database.
+- Migration V3 enforces one open Stripe order per invoice; resolve duplicate
+  open orders before migrating an existing database.
+- Historical setup and migration guides may describe the previous Cashfree
+  starter or outdated Stripe steps; this README describes the current core API.
 
 ## Tests
 
+`mvn test` runs the unit tests. PostgreSQL integration tests are opt-in and
+must use a disposable database:
+
 ```bash
-mvn test
+PGCONNECT_INTEGRATION_TESTS=true \
+DB_URL=jdbc:postgresql://localhost:5432/pgconnect_test \
+DB_USERNAME=your_test_user DB_PASSWORD=your_test_password mvn test
 ```
 
-The included test is a small contract smoke test, not end-to-end payment coverage. Do not enable live payments until the missing production controls above are implemented and reviewed.
+The tests exercise development OTP, authorization, owner approval, bookings,
+and invoice isolation, signature verification, payment validation and
+idempotency. They do not exercise Stripe network calls or a real sandbox webhook.

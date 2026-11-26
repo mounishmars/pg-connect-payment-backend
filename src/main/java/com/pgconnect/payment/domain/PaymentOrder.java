@@ -40,6 +40,7 @@ public class PaymentOrder {
     public UUID getOwnerId(){return ownerId;} 
     public BigDecimal getAmount(){return amount;}
     public String getGatewayOrderId(){return gatewayOrderId;} 
+    public String getGateway(){return gateway;}
     public String getStatus(){return status;} 
     public String getPaymentSessionId(){return paymentSessionId;}
     public void activate(String paymentIntentId,String clientSecret){
@@ -48,5 +49,6 @@ public class PaymentOrder {
       status="ACTIVE";
     }
     public void markPaid(){status="PAID";}
+    public void markCancelled(){status="CANCELLED";}
     public void markFailed(){status="FAILED";}
 }

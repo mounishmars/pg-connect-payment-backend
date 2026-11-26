@@ -5,4 +5,5 @@ import java.util.*;
 public interface PaymentOrderRepository extends JpaRepository<PaymentOrder,UUID> {
  Optional<PaymentOrder> findByIdempotencyKey(String key);
  Optional<PaymentOrder> findByGatewayOrderId(String id);
+ Optional<PaymentOrder> findByRentInvoiceIdAndGatewayAndStatusIn(UUID invoiceId, String gateway, Collection<String> statuses);
 }
